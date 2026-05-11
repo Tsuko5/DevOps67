@@ -42,7 +42,7 @@ jobs:
           exit-code: true
 
       - name: Trivy scan MySQL image (non bloquant)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: mysql:8.0
           format: table
