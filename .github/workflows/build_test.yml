@@ -41,7 +41,7 @@ jobs:
           only-severities: critical
           exit-code: true
 
-      - name: Trivy scan MySQL image (non bloquant)
+      - name: Trivy scan MySQL image (
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: mysql:8.0
@@ -85,8 +85,8 @@ jobs:
             echo "Tentative $attempt/$max_attempts"
             docker compose ps
 
-            total=$(docker compose ps --format json | jq length)
-            healthy=$(docker compose ps --format json | jq -r '[.[].Health] | map(select(. == "healthy")) | length')
+            total=$(docker compose ps --format json | jq -s 'length')
+            healthy=$(docker compose ps --format json | jq -s '[.[].Health] | map(select(. == "healthy")) | length')
 
             if [ "$total" -gt 0 ] && [ "$healthy" -eq "$total" ]; then
               echo "Tous les services sont healthy"
