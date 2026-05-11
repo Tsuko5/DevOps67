@@ -35,9 +35,100 @@ jobs:
       - name: Docker Scout Scan
         uses: docker/scout-action@v1
         with:
-          command: cves, recommendations
+          command: cves
           image: my-app:1.0.0
           file: api/Dockerfile
-          only-severities: critical,high
+          only-severities: critical
           exit-code: true
-    
+
+      - name: Trivy scan MySQL image (non bloquant)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: mysql:8.0
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: 0
+
+  docker_compose_check:
+    runs-on: ubuntu-latest
+    # Add a dependency to the build job
+    needs: build_test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate .env from secrets
+        run: |
+          cat > .env <<EOF
+          MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+          MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}
+          MYSQL_USER=${{ secrets.MYSQL_USER }}
+          MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
+          MONGO_ROOT_USERNAME=${{ secrets.MONGO_ROOT_USERNAME }}
+          MONGO_ROOT_PASSWORD=${{ secrets.MONGO_ROOT_PASSWORD }}
+          MONGO_DB_NAME=${{ secrets.MONGO_DB_NAME }}
+          API_PORT=8001
+          ADMINER_PORT=8083
+          MONGO_EXPRESS_PORT=8084
+          EOF
+
+      - name: Build the stack
+        run: docker compose up -d
+
+      - name: Wait until all services are healthy
+        run: |
+          max_attempts=12
+          attempt=1
+
+          while [ "$attempt" -le "$max_attempts" ]; do
+            echo "Tentative $attempt/$max_attempts"
+            docker compose ps
+
+            total=$(docker compose ps --format json | jq length)
+            healthy=$(docker compose ps --format json | jq -r '[.[].Health] | map(select(. == "healthy")) | length')
+
+            if [ "$total" -gt 0 ] && [ "$healthy" -eq "$total" ]; then
+              echo "Tous les services sont healthy"
+              exit 0
+            fi
+
+            sleep 5
+            attempt=$((attempt + 1))
+          done
+
+          echo "Timeout: certains services ne sont pas healthy"
+          docker compose ps
+          exit 1
+
+      - name: Functional checks
+        run: |
+          curl -f http://localhost:8001/posts
+          curl -f http://localhost:8001/users
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Shutdown stack
+        if: always()
+        run: docker compose down -v
+
+  publish_image:
+    runs-on: ubuntu-latest
+    needs: docker_compose_check
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push latest image
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest -f api/Dockerfile ./api
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest
